@@ -233,6 +233,13 @@ FFMS_VideoSource::FFMS_VideoSource(const char *SourceFile, FFMS_Index &Index, in
         if (CodecContext->codec_id == AV_CODEC_ID_H264 && CodecContext->has_b_frames)
             CodecContext->has_b_frames = 15; // the maximum possible value for h264
 
+        if (CodecContext->codec_id == AV_CODEC_ID_VP9 ||
+            CodecContext->codec_id == AV_CODEC_ID_AV1) {
+            TempDecodeFrame = av_frame_alloc();
+            if (!TempDecodeFrame)
+                throw FFMS_Exception(FFMS_ERROR_DECODING, FFMS_ERROR_ALLOCATION_FAILED, "Could not allocate temp frame.");
+        }
+
         if (avcodec_open2(CodecContext, Codec, nullptr) < 0)
             throw FFMS_Exception(FFMS_ERROR_DECODING, FFMS_ERROR_CODEC,
                 "Could not open video codec");
@@ -645,21 +652,18 @@ bool FFMS_VideoSource::DecodePacket(AVPacket *Packet) {
         // may still obtained bufferred decoded frames and the number of frames
         // in the buffer decreases.
         DelayCounter--;
-    } else if (CodecContext->codec_id == AV_CODEC_ID_VP9 && Ret != AVERROR(EAGAIN) && Ret != AVERROR_EOF) {
+    } else if (CodecContext->codec_id == AV_CODEC_ID_VP9 ||
+               CodecContext->codec_id == AV_CODEC_ID_AV1) {
         // The internal VP9 BSF does not follow the push/pull documentation properly.
-        // It should keep a queue of data interanlly so further calls can return EAGAIN,
+        // It should keep a queue of data internally so further calls can return EAGAIN,
         // but with VP9, it frees and discards that data when the next packet is sent.
         // We need to call it a maximum of one extra time, to account for super frames
         // that have both a visible and invisible frame in one packet. If we don't,
         // the API happily and silently creates corrupt data output. There are not even
         // any warnings output by the decoder. Happy days.
-        AVFrame *tmp = av_frame_alloc();
         int VP9Ret = 0;
-        if (!tmp)
-            throw FFMS_Exception(FFMS_ERROR_DECODING, FFMS_ERROR_ALLOCATION_FAILED, "Could not alloacate temp frame.");
         while (VP9Ret == 0)
-            VP9Ret = avcodec_receive_frame(CodecContext, tmp);
-        av_frame_free(&tmp);
+            VP9Ret = avcodec_receive_frame(CodecContext, TempDecodeFrame);
     }
 
     if (Ret == 0 && InitialDecode == 1)
@@ -727,6 +731,8 @@ void FFMS_VideoSource::Free() {
     av_freep(&SWSFrameData[0]);
     av_frame_free(&DecodeFrame);
     av_frame_free(&LastDecodedFrame);
+    if (TempDecodeFrame)
+        av_frame_free(&TempDecodeFrame);
 }
 
 void FFMS_VideoSource::DecodeNextFrame(int64_t &AStartTime, int64_t &Pos) {

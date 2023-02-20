@@ -88,6 +88,7 @@ private:
     size_t HDR10PlusBufferSize = 0;
     AVFrame *DecodeFrame = nullptr;
     AVFrame *LastDecodedFrame = nullptr;
+    AVFrame *TempDecodeFrame = nullptr;     // Used for VP9 and AV1 to always drain all frames until EAGAIN
     int LastFrameNum = 0;
     FFMS_Index &Index;
     FFMS_Track Frames;

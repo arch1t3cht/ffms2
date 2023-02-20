@@ -233,6 +233,22 @@ FFMS_VideoSource::FFMS_VideoSource(const char *SourceFile, FFMS_Index &Index, in
         if (CodecContext->codec_id == AV_CODEC_ID_H264 && CodecContext->has_b_frames)
             CodecContext->has_b_frames = 15; // the maximum possible value for h264
 
+        if (CodecContext->codec_id == AV_CODEC_ID_VC1 && CodecContext->has_b_frames) {
+            // Similar yet different to h264 workaround above
+            // vc1 simply sets has_b_frames to 1 no matter how many there are so instead we set it to the max value
+            // in order to not confuse our own delay guesses later
+            // Doesn't affect actual vc1 reordering unlike h264
+            Delay = 7 + (CodecContext->thread_count - 1); // the maximum possible value for vc1
+        } else if (CodecContext->codec_id == AV_CODEC_ID_AV1) {
+            av_opt_set_int(CodecContext->priv_data, "tilethreads", (DecodingThreads == 1) ? 1 : 2, 0);
+            av_opt_set_int(CodecContext->priv_data, "framethreads", (DecodingThreads == 1) ? 1 : 2, 0);
+            Delay = CodecContext->thread_count;
+        } else if (CodecContext->codec_id == AV_CODEC_ID_MPEG2VIDEO) {
+            Delay = CodecContext->has_b_frames;
+        } else {
+            Delay = CodecContext->has_b_frames + (CodecContext->thread_count - 1); // Normal decoder delay
+        }
+
         if (CodecContext->codec_id == AV_CODEC_ID_VP9 ||
             CodecContext->codec_id == AV_CODEC_ID_AV1) {
             TempDecodeFrame = av_frame_alloc();
@@ -243,15 +259,6 @@ FFMS_VideoSource::FFMS_VideoSource(const char *SourceFile, FFMS_Index &Index, in
         if (avcodec_open2(CodecContext, Codec, nullptr) < 0)
             throw FFMS_Exception(FFMS_ERROR_DECODING, FFMS_ERROR_CODEC,
                 "Could not open video codec");
-
-        // Similar yet different to h264 workaround above
-        // vc1 simply sets has_b_frames to 1 no matter how many there are so instead we set it to the max value
-        // in order to not confuse our own delay guesses later
-        // Doesn't affect actual vc1 reordering unlike h264
-        if (CodecContext->codec_id == AV_CODEC_ID_VC1 && CodecContext->has_b_frames)
-            Delay = 7 + (CodecContext->thread_count - 1); // the maximum possible value for vc1
-        else
-            Delay = CodecContext->has_b_frames + (CodecContext->thread_count - 1); // Normal decoder delay
 
         // Always try to decode a frame to make sure all required parameters are known
         int64_t DummyPTS = 0, DummyPos = 0;
